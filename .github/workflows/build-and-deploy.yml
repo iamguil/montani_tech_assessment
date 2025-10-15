@@ -1,11 +1,12 @@
-name: Build and Deploy to S3
+name: Build and Deploy
 
 on:
   push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
 
 jobs:
   build-and-deploy:
@@ -37,7 +38,7 @@ jobs:
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION }}
+        aws-region: ${{ env.AWS_REGION }}
     
     - name: Upload to S3
       run: |
@@ -50,3 +51,48 @@ jobs:
         name: hello-world-${{ env.TIMESTAMP }}
         path: ${{ env.ARCHIVE_NAME }}
         retention-days: 30
+    
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+    
+    - name: Build, tag, and push Docker image to Amazon ECR
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+        BUILD_TAG: build-${{ github.run_number }}-${{ github.run_attempt }}
+      run: |
+        # Build the Docker image
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$BUILD_TAG .
+        
+        # Push the Docker images
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$BUILD_TAG
+        
+        echo "Image pushed to ECR:"
+        echo "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+        echo "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
+        echo "$ECR_REGISTRY/$ECR_REPOSITORY:$BUILD_TAG"
+    
+    - name: Output deployment summary
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        echo "### Deployment Summary :rocket:" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "#### S3 Archive" >> $GITHUB_STEP_SUMMARY
+        echo "- **Archive:** ${{ env.ARCHIVE_NAME }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **S3 Bucket:** ${{ secrets.S3_BUCKET_NAME }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "#### Docker Image (ECR)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Registry:** $ECR_REGISTRY" >> $GITHUB_STEP_SUMMARY
+        echo "- **Repository:** $ECR_REPOSITORY" >> $GITHUB_STEP_SUMMARY
+        echo "- **Image Tag (SHA):** $IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+        echo "- **Image Tag (Latest):** latest" >> $GITHUB_STEP_SUMMARY
+        echo "- **Build Number:** build-${{ github.run_number }}-${{ github.run_attempt }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Full Image URI:** \`$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
