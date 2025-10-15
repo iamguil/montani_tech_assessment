@@ -250,8 +250,8 @@ Resources:
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
-          AssignPublicIp: DISABLED
-          Subnets: !Ref SubnetIds
+          AssignPublicIp: ENABLED
+          Subnets: !Ref PublicSubnetIds
           SecurityGroups:
             - !Ref ECSTaskSecurityGroup
       LoadBalancers:
