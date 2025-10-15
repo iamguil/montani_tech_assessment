@@ -77,6 +77,37 @@ jobs:
         echo "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
         echo "$ECR_REGISTRY/$ECR_REPOSITORY:$BUILD_TAG"
     
+    - name: Deploy to ECS using CloudFormation
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+        STACK_NAME: ${{ secrets.CLOUDFORMATION_STACK_NAME }}
+      run: |
+        # Set the full image URI
+        IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+        
+        # Deploy CloudFormation stack
+        aws cloudformation deploy \
+          --template-file cloudformation/ecs-service.yml \
+          --stack-name ${STACK_NAME} \
+          --parameter-overrides \
+            VpcId=${{ secrets.VPC_ID }} \
+            SubnetIds="${{ secrets.PRIVATE_SUBNET_IDS }}" \
+            PublicSubnetIds="${{ secrets.PUBLIC_SUBNET_IDS }}" \
+            ECRImageUri=${IMAGE_URI} \
+            ServiceName=${{ secrets.SERVICE_NAME }} \
+          --capabilities CAPABILITY_NAMED_IAM \
+          --no-fail-on-empty-changeset
+        
+        # Get stack outputs
+        ALB_DNS=$(aws cloudformation describe-stacks \
+          --stack-name ${STACK_NAME} \
+          --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' \
+          --output text)
+        
+        echo "ALB_DNS=${ALB_DNS}" >> $GITHUB_ENV
+        echo "Deployment completed. Application available at: http://${ALB_DNS}"
+    
     - name: Output deployment summary
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -96,3 +127,10 @@ jobs:
         echo "- **Build Number:** build-${{ github.run_number }}-${{ github.run_attempt }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Full Image URI:** \`$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "#### ECS Deployment" >> $GITHUB_STEP_SUMMARY
+        echo "- **Stack Name:** ${{ secrets.CLOUDFORMATION_STACK_NAME }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Service Name:** ${{ secrets.SERVICE_NAME }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Application URL:** http://${{ env.ALB_DNS }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "🌐 **Access your application at:** [http://${{ env.ALB_DNS }}](http://${{ env.ALB_DNS }})" >> $GITHUB_STEP_SUMMARY
